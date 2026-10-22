@@ -93,10 +93,29 @@ Or to limit it to specific file types only:
 
 Version hints are cached for 5 minutes and automatically refreshed every hour while the extension is running. To force an immediate refresh, simply **save the file** — Loupe detects the save, clears the cache for that file's registry, and fetches the latest versions straight away.
 
+## Custom npm registries
+
+For `package.json` files, Loupe respects your **`~/.npmrc`**, so private or company registries (Verdaccio, Nexus, Artifactory, GitHub Packages, …) work out of the box. The following settings are supported:
+
+- `registry`: the default registry (falls back to `https://registry.npmjs.org/`)
+- `@scope:registry`: a registry for a specific scope
+- `//host/path/:_authToken`: a bearer token for a registry
+- `//host/path/:_auth`, or `username` + `_password`: basic auth for a registry
+- `${ENV_VAR}` placeholders in values, so you don't have to store tokens in the file
+
+```ini
+@mycompany:registry=https://npm.mycompany.com/
+//npm.mycompany.com/:_authToken=${NPM_TOKEN}
+```
+
+Changes to `~/.npmrc` are picked up the next time you save a `package.json` or on the hourly refresh.
+
+> **Note:** Only the `.npmrc` in your home directory is read for now. Project-level `.npmrc` files and `NPM_CONFIG_*` environment variables are not supported yet.
+
 ## Requirements
 
 - Zed 0.205 or later
-- An internet connection for registry lookups (results are cached for 5 minutes)
+- Network access to the configured registries (results are cached for 5 minutes)
 
 ## Contributing
 

@@ -1,8 +1,14 @@
 import { VersionCache } from "../cache";
 import { log } from "../log";
 import type { PackageInfo, RegistryHandler } from "../types";
+import { authHeaderFor, hostOf, registryFor, reloadNpmrc } from "./npmrc";
 
 const cache = new VersionCache();
+
+// Abbreviated metadata is much smaller than the full packument but still
+// contains dist-tags; registries that don't support it fall back to JSON.
+const PACKUMENT_ACCEPT =
+	"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
 const DEP_SECTIONS = [
 	"dependencies",
@@ -43,25 +49,43 @@ export const npmHandler: RegistryHandler = {
 
 	clearCache(): void {
 		cache.clear();
+		// Pick up edits to ~/.npmrc on save and on the periodic refresh.
+		reloadNpmrc();
 	},
 
 	async fetchLatestVersion(name: string): Promise<string> {
 		const cached = cache.get(name);
 		if (cached) return cached;
 
+		const registry = registryFor(name);
 		try {
-			const res = await fetch(
-				`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`,
-			);
+			// Scoped names are sent as "@scope%2fname", like the npm CLI does.
+			// The full packument is used instead of "/latest" because many
+			// private registries (Artifactory, GitHub Packages, …) lack that endpoint.
+			const url = `${registry}${name.replace("/", "%2f")}`;
+			const headers: Record<string, string> = { Accept: PACKUMENT_ACCEPT };
+			const auth = authHeaderFor(url);
+			if (auth) headers.Authorization = auth;
+
+			const res = await fetch(url, { headers });
 			if (!res.ok) {
-				log(`npm fetch failed for ${name}: ${res.status}`);
+				log(
+					`npm fetch failed for ${name} (${hostOf(registry)}): ${res.status}`,
+				);
 				return "?";
 			}
-			const data = (await res.json()) as { version: string };
-			cache.set(name, data.version);
-			return data.version;
+			const data = (await res.json()) as {
+				"dist-tags"?: { latest?: string };
+			};
+			const latest = data["dist-tags"]?.latest;
+			if (!latest) {
+				log(`npm: no latest dist-tag for ${name} (${hostOf(registry)})`);
+				return "?";
+			}
+			cache.set(name, latest);
+			return latest;
 		} catch (e) {
-			log(`npm fetch error for ${name}: ${e}`);
+			log(`npm fetch error for ${name} (${hostOf(registry)}): ${e}`);
 			return "?";
 		}
 	},
