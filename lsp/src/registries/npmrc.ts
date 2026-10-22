@@ -18,14 +18,19 @@ interface NpmrcConfig {
 	strictSsl: boolean;
 }
 
+/** Idle keep-alive sockets are closed after this, so replaced agents don't leak. */
+const AGENT_IDLE_TIMEOUT_MS = 30_000;
+
 let config: NpmrcConfig | null = null;
 let agent: Agent | null = null;
+/** TLS settings the current agent was built from. */
+let agentKey: string | null = null;
 
 /** Re-reads ~/.npmrc on the next lookup. */
 export function reloadNpmrc(): void {
+	// The agent is kept: destroying it would abort requests still in flight.
+	// httpsAgent() replaces it if the TLS settings changed.
 	config = null;
-	agent?.destroy();
-	agent = null;
 }
 
 /**
@@ -38,12 +43,15 @@ export function httpsAgent(): Agent | undefined {
 	const { ca, strictSsl } = getConfig();
 	if (ca.length === 0 && strictSsl) return undefined;
 
-	if (!agent) {
+	const key = JSON.stringify([ca, strictSsl]);
+	if (!agent || agentKey !== key) {
 		agent = new Agent({
 			ca: [...rootCertificates, ...ca],
 			rejectUnauthorized: strictSsl,
 			keepAlive: true,
+			timeout: AGENT_IDLE_TIMEOUT_MS,
 		});
+		agentKey = key;
 	}
 	return agent;
 }
@@ -131,7 +139,7 @@ function loadConfig(): NpmrcConfig {
 				withTrailingSlash(value),
 			);
 		} else if (key === "cafile") {
-			const caPath = resolve(homedir(), value);
+			const caPath = resolve(homedir(), expandHome(value));
 			try {
 				result.ca.push(readFileSync(caPath, "utf8"));
 			} catch (e) {
@@ -177,6 +185,12 @@ function nerfDart(url: string): string {
 
 function withTrailingSlash(url: string): string {
 	return url.endsWith("/") ? url : `${url}/`;
+}
+
+/** "~/certs/ca.pem" → "<home>/certs/ca.pem", like npm does for path settings. */
+function expandHome(path: string): string {
+	if (path === "~") return homedir();
+	return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
 function unquote(value: string): string {

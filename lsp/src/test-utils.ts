@@ -173,9 +173,26 @@ export async function startServer(
 	};
 }
 
-/** Responds with a packument whose latest dist-tag is the given version. */
-export function packument(version: string): Handler {
-	return (_req, res) => {
+/**
+ * Serves a package whose latest dist-tag is the given version, both as the
+ * "/-/package/<name>/dist-tags" document and as a packument. With
+ * distTags: false the dist-tags endpoint 404s, like on Artifactory.
+ */
+export function packument(
+	version: string,
+	{ distTags = true }: { distTags?: boolean } = {},
+): Handler {
+	return (req, res) => {
+		if (/\/-\/package\/.+\/dist-tags$/.test(req.url ?? "")) {
+			if (!distTags) {
+				res.writeHead(404);
+				res.end();
+				return;
+			}
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ latest: version }));
+			return;
+		}
 		res.writeHead(200, { "content-type": "application/json" });
 		res.end(JSON.stringify({ "dist-tags": { latest: version } }));
 	};

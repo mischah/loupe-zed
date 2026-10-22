@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { Agent } from "node:https";
 import { after, before, describe, it } from "node:test";
 import { getJson } from "./http";
-import { startServer, type TestServer } from "./test-utils";
+import {
+	cleanupTempDirs,
+	createTestCa,
+	hasOpenssl,
+	startServer,
+	type TestServer,
+} from "./test-utils";
 
 describe("getJson", () => {
 	let server: TestServer;
@@ -66,6 +73,31 @@ describe("getJson", () => {
 		assert.deepEqual(res.body, { from: "other" });
 		assert.equal(server.requests.at(-1)?.authorization, "Bearer origin-only");
 		assert.equal(other.requests.at(-1)?.authorization, undefined);
+	});
+
+	it("drops Authorization after a redirect from https to http", {
+		skip: !hasOpenssl() && "openssl not available",
+	}, async () => {
+		const ca = createTestCa();
+		const secure = await startServer(
+			(_req, res) => {
+				res.writeHead(301, { location: `${server.url}/data` });
+				res.end();
+			},
+			{ key: ca.serverKey, cert: ca.serverCert },
+		);
+		try {
+			const res = await getJson(`${secure.url}/x`, {
+				authFor: () => "Bearer secret",
+				agent: new Agent({ ca: ca.caPem }),
+			});
+			assert.deepEqual(res.body, { ok: true });
+			assert.equal(secure.requests.at(-1)?.authorization, "Bearer secret");
+			assert.equal(server.requests.at(-1)?.authorization, undefined);
+		} finally {
+			await secure.close();
+			cleanupTempDirs();
+		}
 	});
 
 	it("gives up after too many redirects", async () => {

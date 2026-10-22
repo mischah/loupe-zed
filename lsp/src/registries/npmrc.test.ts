@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { rootCertificates } from "node:tls";
@@ -126,6 +126,33 @@ describe("httpsAgent", () => {
 			ca[ca.length - 1],
 			"-----BEGIN CERTIFICATE-----\nBBBB\n-----END CERTIFICATE-----",
 		);
+	});
+
+	it("expands ~ in cafile paths", () => {
+		const home = withNpmrc("cafile=~/certs/ca.pem\n");
+		mkdirSync(join(home, "certs"));
+		writeFileSync(
+			join(home, "certs", "ca.pem"),
+			"-----BEGIN CERTIFICATE-----\nCCCC\n-----END CERTIFICATE-----\n",
+		);
+		reloadNpmrc();
+		const ca = httpsAgent()?.options.ca as string[];
+		assert.match(ca[ca.length - 1], /CCCC/);
+	});
+
+	it("keeps the agent across reloads while the TLS settings stay the same", () => {
+		withNpmrc("strict-ssl=false\n");
+		const first = httpsAgent();
+		reloadNpmrc();
+		assert.equal(httpsAgent(), first);
+		withNpmrc("strict-ssl=false\nregistry=https://npm.example/\n");
+		assert.equal(httpsAgent(), first);
+		withNpmrc(`strict-ssl=false\ncafile=${join(makeTempDir(), "none.pem")}\n`);
+		assert.equal(httpsAgent(), first);
+		withNpmrc(
+			'ca="-----BEGIN CERTIFICATE-----\\nDDDD\\n-----END CERTIFICATE-----"\n',
+		);
+		assert.notEqual(httpsAgent(), first);
 	});
 
 	it("disables verification with strict-ssl=false", () => {

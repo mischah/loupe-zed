@@ -6,7 +6,10 @@ const TIMEOUT_MS = 15_000;
 
 export interface GetJsonOptions {
 	headers?: Record<string, string>;
-	/** Resolves the Authorization header per URL, so credentials follow redirects only where configured. */
+	/**
+	 * Resolves the Authorization header per URL, so credentials follow redirects
+	 * only where configured. It is not consulted after a redirect from https:// to http://.
+	 */
 	authFor?: (url: string) => string | undefined;
 	/** Agent for https:// requests, e.g. carrying custom CAs. */
 	agent?: Agent;
@@ -22,19 +25,26 @@ export interface JsonResponse {
 /**
  * GETs a URL and parses the body as JSON. Unlike the global fetch, this
  * accepts a custom HTTPS agent, which is needed for registries signed by
- * a company CA. Follows redirects, including http:// → https://.
+ * a company CA. Follows redirects, including http:// → https://. After a
+ * redirect from https:// to http://, no Authorization header is sent, so
+ * tokens never leave an encrypted connection for a plaintext one.
  */
 export async function getJson(
 	url: string,
 	options: GetJsonOptions = {},
 ): Promise<JsonResponse> {
 	let current = url;
+	let downgraded = false;
 
 	for (let i = 0; i <= MAX_REDIRECTS; i++) {
-		const res = await get(current, options);
+		const res = await get(current, downgraded ? withoutAuth(options) : options);
 
 		if (res.status >= 300 && res.status < 400 && res.location) {
-			current = new URL(res.location, current).toString();
+			const next = new URL(res.location, current);
+			if (new URL(current).protocol === "https:" && next.protocol === "http:") {
+				downgraded = true;
+			}
+			current = next.toString();
 			continue;
 		}
 
@@ -45,6 +55,10 @@ export async function getJson(
 	}
 
 	throw new Error(`too many redirects (${MAX_REDIRECTS})`);
+}
+
+function withoutAuth(options: GetJsonOptions): GetJsonOptions {
+	return { ...options, authFor: undefined };
 }
 
 interface RawResponse {
