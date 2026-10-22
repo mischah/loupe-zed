@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
+import { Agent } from "node:https";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { rootCertificates } from "node:tls";
 import { log } from "../log";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org/";
@@ -11,13 +13,39 @@ interface NpmrcConfig {
 	scopes: Map<string, string>;
 	/** Nerf-darted URL ("//host/path/") → key/value pairs such as _authToken */
 	auth: Map<string, Map<string, string>>;
+	/** Extra CA certificates (PEM) from `cafile`, `ca` and `ca[]` */
+	ca: string[];
+	strictSsl: boolean;
 }
 
 let config: NpmrcConfig | null = null;
+let agent: Agent | null = null;
 
 /** Re-reads ~/.npmrc on the next lookup. */
 export function reloadNpmrc(): void {
 	config = null;
+	agent?.destroy();
+	agent = null;
+}
+
+/**
+ * Returns an HTTPS agent carrying the TLS settings from ~/.npmrc, or
+ * undefined when none are configured. Custom CAs are added to Node's
+ * bundled roots instead of replacing them, so npmjs.org keeps working
+ * when `cafile` only contains a company CA.
+ */
+export function httpsAgent(): Agent | undefined {
+	const { ca, strictSsl } = getConfig();
+	if (ca.length === 0 && strictSsl) return undefined;
+
+	if (!agent) {
+		agent = new Agent({
+			ca: [...rootCertificates, ...ca],
+			rejectUnauthorized: strictSsl,
+			keepAlive: true,
+		});
+	}
+	return agent;
 }
 
 /** Returns the registry URL (with trailing slash) responsible for the given package. */
@@ -73,6 +101,8 @@ function loadConfig(): NpmrcConfig {
 		registry: DEFAULT_REGISTRY,
 		scopes: new Map(),
 		auth: new Map(),
+		ca: [],
+		strictSsl: true,
 	};
 
 	const path = join(homedir(), ".npmrc");
@@ -100,6 +130,19 @@ function loadConfig(): NpmrcConfig {
 				key.slice(0, -":registry".length),
 				withTrailingSlash(value),
 			);
+		} else if (key === "cafile") {
+			const caPath = resolve(homedir(), value);
+			try {
+				result.ca.push(readFileSync(caPath, "utf8"));
+			} catch (e) {
+				log(`could not read cafile ${caPath}: ${e}`);
+			}
+		} else if (key === "ca" || key === "ca[]") {
+			// Inline certificates are written with literal "\n" sequences.
+			if (value && value !== "null")
+				result.ca.push(value.replace(/\\n/g, "\n"));
+		} else if (key === "strict-ssl") {
+			result.strictSsl = value !== "false";
 		} else if (key.startsWith("//")) {
 			// Split at the last ":" so ports in the host ("//host:4873/:_authToken") stay intact.
 			const sep = key.lastIndexOf(":");
@@ -112,7 +155,7 @@ function loadConfig(): NpmrcConfig {
 	}
 
 	log(
-		`loaded ${path}: registry=${hostOf(result.registry)}, scopes=${result.scopes.size}, auth entries=${result.auth.size}`,
+		`loaded ${path}: registry=${hostOf(result.registry)}, scopes=${result.scopes.size}, auth entries=${result.auth.size}, extra CAs=${result.ca.length}, strict-ssl=${result.strictSsl}`,
 	);
 	return result;
 }

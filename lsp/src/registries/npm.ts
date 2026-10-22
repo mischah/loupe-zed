@@ -1,7 +1,14 @@
 import { VersionCache } from "../cache";
+import { getJson } from "../http";
 import { log } from "../log";
 import type { PackageInfo, RegistryHandler } from "../types";
-import { authHeaderFor, hostOf, registryFor, reloadNpmrc } from "./npmrc";
+import {
+	authHeaderFor,
+	hostOf,
+	httpsAgent,
+	registryFor,
+	reloadNpmrc,
+} from "./npmrc";
 
 const cache = new VersionCache();
 
@@ -63,18 +70,20 @@ export const npmHandler: RegistryHandler = {
 			// The full packument is used instead of "/latest" because many
 			// private registries (Artifactory, GitHub Packages, …) lack that endpoint.
 			const url = `${registry}${name.replace("/", "%2f")}`;
-			const headers: Record<string, string> = { Accept: PACKUMENT_ACCEPT };
-			const auth = authHeaderFor(url);
-			if (auth) headers.Authorization = auth;
-
-			const res = await fetch(url, { headers });
-			if (!res.ok) {
+			// Auth is resolved per URL so it follows redirects (e.g. http → https)
+			// only to hosts that have credentials configured in ~/.npmrc.
+			const res = await getJson(url, {
+				headers: { Accept: PACKUMENT_ACCEPT },
+				authFor: authHeaderFor,
+				agent: httpsAgent(),
+			});
+			if (res.status < 200 || res.status >= 300) {
 				log(
 					`npm fetch failed for ${name} (${hostOf(registry)}): ${res.status}`,
 				);
 				return "?";
 			}
-			const data = (await res.json()) as {
+			const data = res.body as {
 				"dist-tags"?: { latest?: string };
 			};
 			const latest = data["dist-tags"]?.latest;

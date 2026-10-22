@@ -101,16 +101,22 @@ For `package.json` files, Loupe respects your **`~/.npmrc`**, so private or comp
 - `@scope:registry`: a registry for a specific scope
 - `//host/path/:_authToken`: a bearer token for a registry
 - `//host/path/:_auth`, or `username` + `_password`: basic auth for a registry
+- `cafile`: a PEM file with one or more additional CA certificates, e.g. for a company root CA
+- `ca` / `ca[]`: inline PEM certificates (with `\n` line breaks)
+- `strict-ssl=false`: disables certificate verification for all npm lookups (not recommended)
 - `${ENV_VAR}` placeholders in values, so you don't have to store tokens in the file
 
 ```ini
 @mycompany:registry=https://npm.mycompany.com/
 //npm.mycompany.com/:_authToken=${NPM_TOKEN}
+cafile=/Users/me/.certs/CompanyRoot.pem
 ```
+
+Certificates from `cafile` and `ca` are trusted **in addition to** the built-in root certificates, so the public npm registry keeps working. Redirects (e.g. from `http://` to `https://`) are followed, and credentials are only sent to hosts that have them configured.
 
 Changes to `~/.npmrc` are picked up the next time you save a `package.json` or on the hourly refresh.
 
-> **Note:** Only the `.npmrc` in your home directory is read for now. Project-level `.npmrc` files and `NPM_CONFIG_*` environment variables are not supported yet.
+> **Note:** Only the `.npmrc` in your home directory is read for now. Project-level `.npmrc` files, `NPM_CONFIG_*` environment variables, client certificates (`certfile` / `keyfile`) and proxies (`proxy` / `https-proxy`) are not supported yet.
 
 ## Requirements
 
