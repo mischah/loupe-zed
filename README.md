@@ -191,6 +191,8 @@ name = "Loupe LSP"
 languages = ["JSON", "TOML", "MyLanguage"]
 ```
 
+4. Add tests in `lsp/src/registries/my-registry.test.ts`, next to the handler (see `npmrc.test.ts` and `npm.test.ts` for examples).
+
 That's it — `server.ts` requires no changes.
 
 ### Dev setup
@@ -201,6 +203,14 @@ cd loupe-zed/lsp
 npm install
 npm run watch
 ```
+
+Run the tests (type check plus [`node:test`](https://nodejs.org/api/test.html)) with:
+
+```bash
+npm test
+```
+
+Tests live next to the code as `*.test.ts` and are excluded from the build via `tsconfig.build.json`. The TLS tests generate a throwaway CA at runtime and need `openssl` on your `PATH`; they are skipped without it. No test talks to the internet.
 
 Then load the extension as a dev extension in Zed via Extensions → Install Dev Extension.
 

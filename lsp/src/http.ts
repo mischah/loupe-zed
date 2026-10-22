@@ -10,6 +10,8 @@ export interface GetJsonOptions {
 	authFor?: (url: string) => string | undefined;
 	/** Agent for https:// requests, e.g. carrying custom CAs. */
 	agent?: Agent;
+	/** Per-request timeout, defaults to 15 s. */
+	timeoutMs?: number;
 }
 
 export interface JsonResponse {
@@ -80,8 +82,9 @@ function get(url: string, options: GetJsonOptions): Promise<RawResponse> {
 				res.on("error", reject);
 			},
 		);
-		req.setTimeout(TIMEOUT_MS, () => {
-			req.destroy(new Error(`timeout after ${TIMEOUT_MS} ms`));
+		const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
+		req.setTimeout(timeoutMs, () => {
+			req.destroy(new Error(`timeout after ${timeoutMs} ms`));
 		});
 		// Name the host that failed, which differs from the registry after a redirect.
 		req.on("error", (e) => reject(new Error(`${target.host}: ${e.message}`)));
