@@ -40,6 +40,26 @@ describe("registryFor", () => {
 		assert.equal(registryFor("@other/ui"), "https://registry.npmjs.org/");
 		assert.equal(registryFor("react"), "https://registry.npmjs.org/");
 	});
+
+	it("strips inline comments like npm, unless escaped or quoted", () => {
+		withNpmrc(
+			[
+				"registry=https://npm.corp.example/ ; internal mirror",
+				"@a:registry=https://a.example/#anchor",
+				"@b:registry=https://b.example/\\;x",
+				'@c:registry="https://c.example/;x"',
+			].join("\n"),
+		);
+		assert.equal(registryFor("react"), "https://npm.corp.example/");
+		assert.equal(registryFor("@a/x"), "https://a.example/");
+		assert.equal(registryFor("@b/x"), "https://b.example/;x/");
+		assert.equal(registryFor("@c/x"), "https://c.example/;x/");
+	});
+
+	it("treats a scope without a slash as the whole scope", () => {
+		withNpmrc("@corp:registry=https://npm.corp.example/\n");
+		assert.equal(registryFor("@corp"), "https://npm.corp.example/");
+	});
 });
 
 describe("authHeaderFor", () => {

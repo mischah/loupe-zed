@@ -35,6 +35,18 @@ describe("getJson", () => {
 				res.end();
 			} else if (url === "/hang") {
 				// Never respond.
+			} else if (url === "/trickle") {
+				// Sends a byte every 20 ms, so the socket never goes idle.
+				res.writeHead(200);
+				const timer = setInterval(() => res.write(" "), 20);
+				res.on("close", () => clearInterval(timer));
+			} else if (url === "/big") {
+				res.writeHead(200, { "content-length": "1000" });
+				res.end(`"${"x".repeat(998)}"`);
+			} else if (url === "/big-chunked") {
+				res.writeHead(200);
+				res.write(`"${"x".repeat(600)}`);
+				res.end(`${"x".repeat(398)}"`);
 			} else if (url === "/broken") {
 				res.writeHead(200);
 				res.end("not json");
@@ -109,6 +121,24 @@ describe("getJson", () => {
 			getJson(`${server.url}/hang`, { timeoutMs: 100 }),
 			/timeout after 100 ms/,
 		);
+	});
+
+	it("times out on responses that trickle in", async () => {
+		await assert.rejects(
+			getJson(`${server.url}/trickle`, { timeoutMs: 200 }),
+			/timeout after 200 ms/,
+		);
+	});
+
+	it("rejects bodies over maxBytes, with or without content-length", async () => {
+		for (const path of ["/big", "/big-chunked"]) {
+			await assert.rejects(
+				getJson(`${server.url}${path}`, { maxBytes: 500 }),
+				/response larger than 500 bytes/,
+			);
+		}
+		const res = await getJson(`${server.url}/big`, { maxBytes: 1000 });
+		assert.equal((res.body as string).length, 998);
 	});
 
 	it("rejects invalid JSON", async () => {

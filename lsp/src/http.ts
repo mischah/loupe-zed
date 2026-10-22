@@ -3,6 +3,9 @@ import { type Agent, request as httpsRequest } from "node:https";
 
 const MAX_REDIRECTS = 5;
 const TIMEOUT_MS = 15_000;
+// Room for large abbreviated packuments while bounding memory when a
+// registry ignores the Accept header and sends a full one.
+const MAX_BYTES = 32 * 1024 * 1024;
 
 export interface GetJsonOptions {
 	headers?: Record<string, string>;
@@ -13,8 +16,10 @@ export interface GetJsonOptions {
 	authFor?: (url: string) => string | undefined;
 	/** Agent for https:// requests, e.g. carrying custom CAs. */
 	agent?: Agent;
-	/** Per-request timeout, defaults to 15 s. */
+	/** Deadline per request including the whole body, defaults to 15 s. */
 	timeoutMs?: number;
+	/** Larger responses are rejected, defaults to 32 MiB. */
+	maxBytes?: number;
 }
 
 export interface JsonResponse {
@@ -80,12 +85,30 @@ function get(url: string, options: GetJsonOptions): Promise<RawResponse> {
 	}
 
 	return new Promise((resolve, reject) => {
+		const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
+		const maxBytes = options.maxBytes ?? MAX_BYTES;
+		// Name the host that failed, which differs from the registry after a redirect.
+		const fail = (message: string) => {
+			reject(new Error(`${target.host}: ${message}`));
+			req.destroy();
+		};
+		const tooLarge = `response larger than ${maxBytes} bytes`;
+
 		const req = send(
 			target,
 			{ headers, agent: isHttps ? options.agent : undefined },
 			(res) => {
+				if (Number(res.headers["content-length"]) > maxBytes) {
+					fail(tooLarge);
+					return;
+				}
 				const chunks: Buffer[] = [];
-				res.on("data", (chunk: Buffer) => chunks.push(chunk));
+				let size = 0;
+				res.on("data", (chunk: Buffer) => {
+					size += chunk.length;
+					if (size > maxBytes) fail(tooLarge);
+					else chunks.push(chunk);
+				});
 				res.on("end", () =>
 					resolve({
 						status: res.statusCode ?? 0,
@@ -93,15 +116,17 @@ function get(url: string, options: GetJsonOptions): Promise<RawResponse> {
 						text: Buffer.concat(chunks).toString("utf8"),
 					}),
 				);
-				res.on("error", reject);
+				res.on("error", (e) => fail(e.message));
 			},
 		);
-		const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
-		req.setTimeout(timeoutMs, () => {
-			req.destroy(new Error(`timeout after ${timeoutMs} ms`));
-		});
-		// Name the host that failed, which differs from the registry after a redirect.
-		req.on("error", (e) => reject(new Error(`${target.host}: ${e.message}`)));
+		// req.setTimeout() only fires while the socket is idle, so a server
+		// trickling bytes could hold the request open indefinitely.
+		const timer = setTimeout(
+			() => fail(`timeout after ${timeoutMs} ms`),
+			timeoutMs,
+		);
+		req.on("close", () => clearTimeout(timer));
+		req.on("error", (e) => fail(e.message));
 		req.end();
 	});
 }

@@ -60,7 +60,8 @@ export function httpsAgent(): Agent | undefined {
 export function registryFor(name: string): string {
 	const { registry, scopes } = getConfig();
 	if (name.startsWith("@")) {
-		const scope = name.slice(0, name.indexOf("/"));
+		const slash = name.indexOf("/");
+		const scope = slash === -1 ? name : name.slice(0, slash);
 		const scoped = scopes.get(scope);
 		if (scoped) return scoped;
 	}
@@ -129,7 +130,7 @@ function loadConfig(): NpmrcConfig {
 		if (eq === -1) continue;
 
 		const key = line.slice(0, eq).trim();
-		const value = expandEnv(unquote(line.slice(eq + 1).trim()));
+		const value = expandEnv(parseValue(line.slice(eq + 1)));
 
 		if (key === "registry") {
 			result.registry = withTrailingSlash(value);
@@ -193,9 +194,32 @@ function expandHome(path: string): string {
 	return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
-function unquote(value: string): string {
-	const match = value.match(/^(["'])(.*)\1$/);
-	return match ? match[2] : value;
+/**
+ * Parses a value like npm's ini package: a fully quoted value is taken
+ * as is, otherwise an unescaped ";" or "#" starts a comment ("\;", "\#"
+ * and "\\" keep the character, other escapes such as "\n" stay untouched).
+ */
+function parseValue(raw: string): string {
+	const value = raw.trim();
+	const quoted = value.match(/^(["'])(.*)\1$/);
+	if (quoted) return quoted[2];
+
+	let result = "";
+	let escaped = false;
+	for (const char of value) {
+		if (escaped) {
+			result += ";#\\".includes(char) ? char : `\\${char}`;
+			escaped = false;
+		} else if (char === "\\") {
+			escaped = true;
+		} else if (char === ";" || char === "#") {
+			break;
+		} else {
+			result += char;
+		}
+	}
+	if (escaped) result += "\\";
+	return result.trim();
 }
 
 function expandEnv(value: string): string {
